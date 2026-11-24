@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -436,6 +437,38 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string) err
 	}
 	d.Common.SetCaptchaToken(resp.CaptchaToken)
 	return nil
+}
+
+func normalizeUploadEndpoint(endpoint, bucket string) string {
+	address := endpoint
+	if !strings.Contains(address, "://") {
+		address = "https://" + address
+	}
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return endpoint
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return endpoint
+	}
+	if parsed.User != nil || parsed.Host != parsed.Hostname() ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return endpoint
+	}
+
+	// OSS adds the bucket to the endpoint. PikPak's .com service accepts that
+	// bucket host, while the .net upload hosts returned by the API fail DNS.
+	host := strings.ToLower(parsed.Hostname())
+	host = strings.TrimPrefix(host, strings.ToLower(bucket)+".")
+	if host == "mypikpak.com" || host == "mypikpak.net" {
+		return "https://mypikpak.com"
+	}
+	gateway, domain, found := strings.Cut(host, ".")
+	if found && strings.HasPrefix(gateway, "upload-") && len(gateway) > len("upload-") &&
+		(domain == "mypikpak.com" || domain == "mypikpak.net") {
+		return "https://mypikpak.com"
+	}
+	return endpoint
 }
 
 func (d *PikPak) UploadByOSS(ctx context.Context, params *S3Params, s model.FileStreamer, up driver.UpdateProgress) error {
